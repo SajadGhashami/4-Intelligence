@@ -1,0 +1,641 @@
+---
+title: "4Intelligence"
+author: "Sajad Ghashami"
+date: "7/3/2020"
+
+output:
+  html_document:
+    code_folding: hide
+    highlight: monochrome
+    number_sections: yes
+    theme: cosmo
+    toc: yes
+    toc_depth: 4
+    toc_float: no
+  pdf_document:
+    toc: yes
+    toc_depth: '4'
+---
+
+# Setup and Configuration of R
+```{r setup, message=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+#install.packages("tidyverse")
+#install.packages("forecast")
+#install.packages("glue")
+#install.packages("knitr")
+#install.packages("rmarkdown")
+#install.packages("forecast")
+#install.packages("sweep")
+#install.packages("timetk")
+#install.packages("tidyquant")
+#install.packages("geofacet")
+#install.packages("pander")
+#install.packages("vcd")
+#install.packages("gmodels")
+#install.packages("ggthemes")
+#install.packages("vtreat")
+#install.packages("modelr")
+#install.packages("corrplot")
+#install.packages("PerformanceAnalytics")
+#install.packages("car")
+#install.packages("leaps")
+#install.packages("broom")
+#install.packages("class")
+#install.packages("neuralnet")
+#install.packages("sigmoid")
+library(RCurl)
+library(tidyverse)
+library(forecast)
+library(knitr)
+library(rmarkdown)
+library(sweep)
+library(forecast)
+library(timetk)
+library(tidyquant)
+library(geofacet)
+library(purrr)
+library(pander)
+library(vcd)
+library(gmodels)
+library(ggthemes)
+library(vtreat)
+library(modelr)
+library(corrplot)
+library(PerformanceAnalytics)
+library(car)
+library(leaps)
+library(broom)
+library(class)
+library(neuralnet)
+library(sigmoid)
+panderOptions('digits', 2)
+defaulttheme <- theme_minimal() + 
+  theme (
+   strip.background = element_rect(fill= "wheat", color="wheat"),
+   panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank()
+)
+theme_set(defaulttheme)
+set.seed(1234)
+```
+
+
+# First Case
+
+Explanation:
+
+
+
+In this Case I am supposed to 
+
+1- Make an exploratory data analysis;
+
+2- Forecast 10 years of the series (if you are performing the exercise in R, use package “forecast”);
+
+3- Check in the following link pages 2 and 3: https://cran.r-project.org/web/packages/pwt8/pwt8.pdf to see a list of all variables in the original dataset. Finding another feature that could be helpful in explaining TFP series? 
+
+
+## Make an exploratory data analysis
+### Downloading Data from Github
+```{r}
+url <- 'https://raw.githubusercontent.com/SajadGhashami/4-Intelligence/master/TFP.csv'
+case1 <- read.csv(url, stringsAsFactors=TRUE)
+case1$isocode <- as.factor(case1$isocode)
+case1$year <- as.Date(ISOdate(case1$year, 1, 1))
+```
+### Looking at data
+``` {r}
+case1 %>% 
+paged_table()
+```
+
+### Summary of data
+```{r message=FALSE}
+summary(case1)
+```
+
+
+```{r  warning=FALSE}
+case1 %>% group_by(isocode) %>%
+  summarise(AverageTFP=mean(rtfpna), TFPStandardDeviation=sd(rtfpna)) %>%
+  kable()
+```
+
+### Visualizing Data
+
+The Trend of TFP is absolutely increasing for USA while it started a radical decline for Mexico at the beginning of 80s and about 15 percent decrease of TFP for CANADA started at beginning of 70s untill 2011. While all of the countries ended up to almost similar point, In can be expected that USA rate increase the rate withing few year considering only 1 criteria (time), While 2 other countries needs more studied more even to include a rough result.   
+```{r  message=FALSE, out.width = '100%'}
+ggplot(case1, aes(year, rtfpna, color=isocode))+geom_point()+geom_smooth()+facet_wrap(isocode~.)+ggtitle("Trend of TFP per each country 1950-2011")
+```
+
+## Forecast 10 years of the series
+
+### Preparing Data and modelling using arima method
+The goal of time series forecasting is to make accurate predictions about the future. The fast and powerful methods that we rely on in machine learning, such as using train-test splits and k-fold cross validation, do not work in the case of time series data. We train multiple models on the entire data set, and then choose the one that fit the best. 
+We are supposed to make a model for each country so we nest the table for each isocode(the result is data column). Next we map tk_ts() function to convert to ts type of data(the result is data_ts column). Next step to apply a model to data to forecast future. Here we use Autoregressive integrated moving average(ARIMA) and ETS (Error, Trend, Seasonal) to compare the results.  We need to choose an optimal ARIMA model. For this we can use auto.arima() function which can choose optimal value of arima. Then we put the result in arimafit and etsfit columns. The next step is to predict next 10 years by both method (Notice that each %>% in code show a step explained)
+```{r }
+case1modelling <- case1 %>%
+  nest(data=c(year,rtfpna)) %>%
+    mutate(data_ts = map(data, tk_ts, freq = 1, start = min(year(case1$year)), silent = TRUE)) %>%
+    mutate(arimafit = map(data_ts, auto.arima), etsfit=map(data_ts, ets)) %>%
+    mutate(arimaforecast = map(arimafit, forecast, h = 10), etsforecast= map(etsfit, forecast, h = 10))
+case1modelling %>% paged_table()
+```
+
+### Arima results
+
+This Table includes Predicted TFP(rtfpna) per year, country, model. Notice that the key should be forecast.
+```{r }
+arimaresult <- case1modelling %>%
+    mutate(arimasweep = map(arimaforecast, sw_sweep, timekit_idx = T, rename_index = "year"),
+             etssweep = map(etsforecast,   sw_sweep, timekit_idx = T, rename_index = "year")) 
+
+arimaresult1 <-     arimaresult  %>%
+      select(isocode, arimasweep) %>%
+      unnest(arimasweep)
+arimaresult2 <-     arimaresult  %>% 
+      select(isocode, etssweep) %>%
+      unnest(etssweep)
+
+arimaresult <- rbind(arimaresult1, arimaresult2) %>% mutate(modelname=rep(c("arima","ets"), each = nrow(arimaresult1)) )
+arimaresult %>% filter(key=="forecast") %>% paged_table()
+```
+### Visualize arima and ets Results
+
+```{r out.width = '100%'}
+arimaresult %>%
+    ggplot(aes(x = year, y = rtfpna, color = isocode)) +
+    # Prediction intervals
+    geom_ribbon(aes(ymin = lo.95, ymax = hi.95), 
+                fill = "#D5DBFF", color = NA, size = 0) +
+    geom_ribbon(aes(ymin = lo.80, ymax = hi.80, fill = isocode), 
+                fill = "#596DD5", color = NA, size = 0, alpha = 0.8) +
+    # Actual & Forecast
+    geom_line()+
+  facet_grid(isocode~modelname)+
+    ggtitle("TFP forecast from 2011 to 2021 for Canada, USA and Mexico") +
+    xlab("Year") +
+    ylab("TFP")
+```
+
+### Evaluating arima and ETS Results
+
+```{r}
+arimaeval <- case1modelling %>%
+    mutate(glance = map(arimafit, sw_glance)) %>%
+    unnest(glance) 
+
+etseval <- case1modelling %>%
+    mutate(glance = map(etsfit, sw_glance)) %>%
+    unnest(glance) 
+
+evaluation <- rbind(arimaeval, etseval) %>% mutate(modelname=rep(c("arima","ets"), each = nrow(arimaeval)) )
+evaluation %>% select(isocode, modelname, model.desc:ACF1) %>% paged_table()
+```
+
+Based On the Evaluation result table we can see that AIC, BIC, MPE, MAPE and MASE is lower for ARIMA comparing to ETS That shows in general we can trust more(In this case AIC and BIC may be less important comparing to other criteria). However, in case of USA, these indicators are almost the same as the trend is linearly increasing and it has less fluctuation. In addition, MAE and RMSE are very similar for both models. There are other models like neural networks be be applied to this problem that can improve the accuracy but as there is only one variable (time) for each country to contribute the model the performance of them would be limited.
+
+## Another explaining feature for TFP
+Total Factor Productivity (TFP) is the primary contributor to GDP Growth Rate. Different studies proves there is correlation between these two feautures. For example, this article [Driving factors behind total factor productivity (TFP)](https://link.springer.com/article/10.1186/s40008-019-0134-6#ref-CR61) aslo support TFP is an important in case of GDP growth and estimated to be statistically significant at 1% level of significance as it describes 0.52% variation in GDP due to 1% change in TFP.
+Here in this dataset rgdpna show the real GDP of each country, However, for this case if I am responsible, I would include other factors such as pop(population) or emp(Number of persons engaged) variable and use the result as another feature to add to the analysis.(GDP per capita at purchasing power parity (PPP)). The definition best match with the explanation is variable **cgdpo** in dataset as it allows comparison of productive capacity across countries and over time.  The reason to do this is that GDP does not account for productivity and more populated countries tend to have more GDP while they might not be relatively productive. 
+
+# Second Case
+
+
+## Downloading Data from Github
+```{r}
+url2 <- 'https://raw.githubusercontent.com/SajadGhashami/4-Intelligence/master/data_comexstat.csv'
+url3 <- 'https://raw.githubusercontent.com/SajadGhashami/4-Intelligence/master/covariates.csv'
+comexstat <- read.csv(url2, stringsAsFactors=TRUE)
+comexstat$date <- ymd(comexstat$date)
+covariates <- read.csv(url3, stringsAsFactors=TRUE)
+covariates$year <- as.Date(ISOdate(covariates$year, 1, 1))
+```
+
+## Glance at the comexstat data
+
+``` {r message=FALSE}
+
+comexstat %>%  paged_table()
+```
+## Summary of comexstat
+``` {r message=FALSE}
+summary(comexstat)
+```
+
+As there are two main numerical columns: **tons** and **usd** and most of the questions of case 2 does not explicitly mention which one to use, I use the one that seems logical for each question. Notice that there can be other variables defined such as usd divided by tons which can indicate value of each KG of the Import/Export showing efficiency of Import/Export in a period of time.
+
+## 1-Show the evolution of total monthly and total annual exports
+
+Show the evolution of total monthly and total annual exports from Brazil (all states and to everywhere) of ‘soybeans’, ‘soybean oil’ and ‘soybean meal’;
+In this case we consider **tons** as the output variable
+``` {r message=FALSE, out.width = '100%'}
+comexstat %>% filter(product %in% c("soybeans", "soybean_oil","soybean_meal") & (type=="Export") ) %>% group_by(year=year(date)) %>% summarize(TotalExport=sum(tons)) %>% 
+  ggplot(aes(year, TotalExport))+geom_line(size=1)+geom_point(color="red")+
+    ggtitle("Total annual exports from Brazil of ‘soybeans’, ‘soybean oil’ and ‘soybean meal’")
+comexstat %>% filter(product %in% c("soybeans", "soybean_oil","soybean_meal") & (type=="Export") ) %>% group_by(month=date) %>% summarize(TotalExport=sum(tons)) %>% 
+  ggplot(aes(month, TotalExport))+geom_line(color="steelblue1",size=0.8)+geom_point(color="blue")+
+    ggtitle("Total monthly exports from Brazil of ‘soybeans’, ‘soybean oil’ and ‘soybean meal’")
+```
+
+## Three most important products exported
+
+ What are the 3 most important products exported by Brazil in the last 5 years?
+ 
+ In this case we consider **usd**(USA dollars) as the output variable because export is more valuable when it increase income independent of its weight.
+``` {r message=FALSE, out.width = '100%'}
+comexstat %>% 
+  filter(type=="Export" & year(date) %in% 2015:2019) %>% 
+  group_by(product) %>% 
+  summarize(Totalusd= sum(usd)) %>%
+  arrange(desc(Totalusd)) %>%
+  top_n(3) %>% bind_cols(rank=c("First", "Second","Third"))  %>% 
+  ggplot(aes(reorder(product,Totalusd),Totalusd, label=paste(rank,"important","\n", "product", "is",product)))+
+  geom_segment( aes(yend=0, xend=product, color=product)) +
+  geom_point( size=4, aes(color=product)) +
+  geom_text(hjust=0.2, position = position_stack(vjust = 0.5))+
+  coord_flip()+
+  
+    ggtitle("3 most important products(usd) exported by Brazil in the last 5 years") +
+    xlab("Product") +
+    ylab("Total Export in usd")
+```
+
+## Main export routes for last 5 years
+ What are the main routes through which Brazil have been exporting ‘corn’ in the last few years? Are there differences in the relative importance of routes depending on the product?
+  In this case we consider **tons** as the output variable. We consider last 5 years as time period of the questions. 226091449.59
+``` {r message=FALSE, out.width = '100%'} 
+comexstat %>% filter(product=="corn" & type=="Export" & year(date) %in% 2015:2019 ) %>% 
+  group_by(route) %>% 
+  summarise(Totaltons=sum(tons)) %>%
+  arrange(desc(Totaltons)) %>%
+  kable()
+```
+
+To check the relation between product and routes relative importance check data only for Export data during last 5 years. Here we do two types of analysis. First simply checking the percentage of each route selection for each product. And then considering number of times products shipped by each route(Not the tons but count of times)
+Visulization of data:
+``` {r message=FALSE, out.width = '100%'}
+  comexstat %>% filter(type=="Export" & year(date) %in% 2015:2019 ) %>% 
+  group_by(route, product) %>%
+  summarise(routetons=sum(tons)) %>%
+  ungroup() %>%
+  group_by(product) %>%
+  mutate(ProductSum=sum(routetons)) %>%
+  mutate(percentageofproduct=routetons/ProductSum) %>%
+  ggplot(aes(x = product, y=percentageofproduct, fill = route, label= round(percentageofproduct,3))) +
+geom_col( position = "dodge") +
+ylab("proportion") +
+  facet_grid(route~.)+
+  coord_flip() +geom_text()
+assoc(comexstat %>% filter(type=="Export" & year(date) %in% 2015:2019 ) %>% select(route,product), shade=TRUE)
+```
+
+Based on the results we can see that in all of product sea is at least 95 percent of all of the **tons** shipped from Brazil and there are some procuts that almost are not shipped with other routes. River however is a mode by which soybeans and corn are carried for 2 an 4 percent.
+About Number of shipment(times where the shipments happened) we can see there are some unexpected number based on route and product. As much as the bar is blue(and tall) the number is more than expected and as much as the color is red(and tall) the number of cell is less that expected. For example, the **number of times** soybeans is sent by the sea is very much less than expected.  
+
+## most important trade partners for Brazil
+ Which countries have been the most important trade partners for Brazil in terms of ‘corn’ and ‘sugar’ in the last 3 years?
+ 
+ In this case we consider both import and export as aggregation in usd as mentioned in [this page:](https://en.wikipedia.org/wiki/List_of_the_largest_trading_partners_of_the_United_States) 
+ 
+``` {r message=FALSE, out.width = '100%'}
+
+comexstat %>%
+  filter(year(date) %in% 2017:2019 & product %in% c("corn","sugar")) %>%
+  group_by(country) %>%
+  summarise(Partnerusd=sum(usd)) %>% 
+  arrange(desc(Partnerusd)) %>%
+  top_n(5) %>%
+  ggplot(aes(x="Partnerusd",reorder(country,Partnerusd), width = Partnerusd, fill=Partnerusd))+
+  geom_tile()+scale_fill_gradient(low = "#56B4E9", high = "#0072B2") 
+```
+
+Iran, Bangladesh, Algeria, Egypt and Malaysia are top 5 trade partner with Brazil considering Import/Export aggregation. 
+
+## Five most important states in terms of exports for each product
+For each of the products in the dataset, show the 5 most important states in terms of exports?
+
+In this case we consider usd as the parameter to calculate importabt states of exports.
+
+``` {r message=FALSE, out.width = '100%'}
+ comexstat %>% 
+  filter(type =="Export") %>%
+  group_by(product, state) %>%
+  summarise(totalusd=sum(usd)) %>%
+  ungroup() %>%
+  group_by(product) %>%
+  mutate(rank=order(order(totalusd, decreasing = T))) %>%
+  filter(rank %in% 1:5) %>%
+  arrange(product, rank) %>%
+  paged_table()
+ 
+```
+
+The top states are ranked within each product(wrap). For example Sao Paulo has exported corn ranked 5th  in term of revenue(usd) by far comparing to other states.  
+
+
+## brazilian soybeans, soybean_meal, and corn export forecasts, in tons, for the next 11 years (2020-2030)
+
+Now, we ask you to show your modelling skills. Feel free to use any type of modelling approach, but bear in mind that the modelling approach depends on the nature of your data, and so different models yield different estimates and forecasts. To help you out in this task we also provide you with a dataset of possible covariates (.xlsx). They all come from public sources (IMF, World Bank) and are presented in index number format. Question: What should be the total brazilian soybeans, soybean_meal, and corn export forecasts, in tons, for the next 11 years (2020-2030)? We’re mostly interested in the annual forecast.
+
+### Looking at the covariates dataset and Preparing forecast dataset
+
+Note that I dont use imputing methods as the number of valid data is small and the imputed value will be so sensetive to current data. Also we can **not** use **monthly data** and **data before 1997** because we dont have monthly data at covariates table and tons exported before 1997 at comexstat database.
+```{r warning=FALSE}
+covar <- covariates[complete.cases(covariates),]
+covar$year <- year(covar$year)
+covar <- covar %>%
+  select(everything(),-price_soybeans,-price_corn,-price_soybean_meal,price_soybeans,price_corn,price_soybean_meal) %>%
+  pivot_longer(price_soybeans:price_soybean_meal, names_to = "product", values_to = "price")
+
+covar$product <- str_replace(covar$product, "price_", "")
+
+comex <- comexstat %>%
+  filter(type=="Export" & product %in% c("soybeans","soybean_meal","corn")) %>%
+  group_by(year=year(date), product) %>%
+  summarize(realexport=sum(tons))
+
+basetable <- left_join(covar, comex, by=c("year", "product")) %>% paged_table() %>%
+  filter(year>=1997) %>%
+  mutate(type= ifelse(is.na(realexport),"prediction","real") )
+basetable$product <- factor(basetable$product)
+
+modeltable <- basetable %>% filter(type=="real")
+predicttable <- basetable %>% filter(type=="prediction")
+```
+
+#### Trends, relations between variables and feature selection
+```{r}
+modeltable %>% paged_table()
+plot.ts(as.data.frame(modeltable %>% select(gdp_china, gdp_iran, gpd_netherlands)))
+plot.ts(as.data.frame(modeltable %>% select(gdp_spain, gdp_thailand, gdp_world)))
+plot.ts(as.data.frame(modeltable %>% select(gdp_egypt, gdp_vietnam, price)))
+plot.ts(as.data.frame(modeltable %>% select(realexport)))
+ggplot(modeltable, aes(year, realexport, color=product))+
+  geom_point()+
+  geom_smooth()+
+  facet_grid(product~., scale = "free_y")
+res <- cor(modeltable %>% select(everything(), -product,-type))
+col<- colorRampPalette(c("blue", "white", "red"))(20)
+heatmap(x = res, col = col, symm = TRUE)
+corn <-  modeltable %>% filter(product=="corn")
+soybean_meal <- modeltable %>% filter(product=="soybean_meal")
+soybeans <- modeltable %>% filter(product=="soybeans")
+```
+
+As it is shown in the graphs we can see that realexport is increasing while when divided to three product the seasonality exist  in soybean_mean and slightly corn. Using correlation matrix heatmap and other trends we can conclude that price needs to be included at our analysis as it has some fluctuation and seems to be significant negative linear relation with realexport. It will be analysed better when grouped by product. Among other trends gdp of spain and iran are different and indicate some relation with realexport. However, It can be considered due to chance(Though Iran proved to be the best importer of corn and sugar in case 1). All of the other factors seem to have strong colinearity with each other. For now we continue working with year(to include general increase over time) and price(As the only variable with completely different trend) 
+
+### Modelling corn, soybean_meal, soybeans with linear regression
+
+The first thing is to look at the general export trend for each product. The result shows that all of the products exports are increasing in different scales. For linear regresion we use price and year as they are.
+We make 5 fold cross-validation to test the model's ability to predict new data. We also consider the possible interaction between year and price. lm(realexport ~ year+price+year:price) is the formula for it
+```{r warning=FALSE}
+#dividing data to train and test using and make the model
+
+folds  <- corn %>% crossv_kfold(k=5) %>% mutate(model = map(train, ~ lm(realexport ~ year+price+year:price, data = .))) %>% mutate(predicted = map2(model, test, ~ augment(.x, newdata = .y))) %>% 
+  unnest(predicted)
+
+#Validating the model
+
+# Compute the residuals
+predicted <- folds %>% 
+  mutate(residual = .fitted - realexport)
+# Plot actual v residual values
+library(ggplot2)
+predicted %>%
+  ggplot(aes(realexport, residual)) +
+    geom_hline(yintercept = 0) +
+    geom_point() +
+    stat_smooth(method = "loess")
+
+rs <- predicted %>%
+  group_by(.id) %>% 
+  summarise(
+    sst = sum((realexport - mean(realexport)) ^ 2), # Sum of Squares Total
+    sse = sum(residual ^ 2),          # Sum of Squares Residual/Error
+    r.squared = 1 - sse / sst         # Proportion of variance accounted for
+    )
+rs
+```
+
+#Average RSquate percent
+```{r }
+mean(rs$r.squared)*100
+
+```
+
+The table above include sst(Sum of Squares Total), sse(Sum of Squares Residual/Error) and r.squared(Proportion of variance accounted for) for each fold(id). As the result we can see that mean rsqure is 65 percent and in average model predict poorly however in the top prediction rsquare is 88 percent. The result shows that there is a risk of overfitting using 5 fold cross validation. All of the result indicate this method is not very reliable for this case so we dont continue calculating for other products. However a better approach might be using GLM and nonlinear regression for future.
+
+
+### Modelling with ANN
+
+One of the issues of the problem which could not be solved with linear regression is that there is seasonality exists in the trend of tons exported from Brazil. So we can create another variable to address position of each year inside each n years of period. So the seasonality can be addressed. For start we put 3 for n.
+
+#### Data preparation
+
+
+```{r buildingdata}
+ann <- basetable %>%  
+  mutate(number=rep(c("one","two","three"),  len = nrow(basetable)))  %>% select(year,price,realexport, product,  type, number) 
+  
+ann$number <- as.factor(ann$number)
+
+m <- model.matrix( ~ number , data = ann )
+
+ann <- data.frame(ann, m)
+ann <- ann %>% select(-number)
+
+
+
+realann <- ann %>% filter(type=="real") %>% select(-type)
+predictann <- ann %>% filter(type=="prediction")  %>%  select(-type)
+
+
+cornrealann <- realann %>% filter(product=="corn")
+soybean_mealrealann <- realann %>% filter(product=="soybean_meal")
+soybeansrealann <- realann %>% filter(product=="soybeans")
+
+cornpredictann <- predictann %>% filter(product=="corn")
+soybean_mealpredictann <- predictann %>% filter(product=="soybean_meal")
+soybeanspredictann <- predictann %>% filter(product=="soybeans")
+
+sigmoid = function(x) {
+  1 / (1 + exp(-x))
+}
+
+normalizecorn <- function(x) {
+  return(0.03+(0.7)*(x-min(x))/(max(x)-min(x)))
+}
+
+normalizesoybean_meal <- function(x) {
+  return(0+(0.383)*(x-min(x))/(max(x)-min(x)))
+}
+
+
+normalizesoybeans <- function(x) {
+  return(1.1+(1)*(x-min(x))/(max(x)-min(x)))
+}
+
+ann %>% paged_table()
+
+cornrealann <- as.data.frame(lapply(cornrealann[,1:3],normalizecorn)) %>%
+            cbind(cornrealann[,4:7]) %>% select(-product)
+
+soybean_mealrealann <- as.data.frame(lapply(soybean_mealrealann[,1:3],normalizesoybean_meal)) %>%
+            cbind(soybean_mealrealann[,4:7]) %>% select(-product)
+
+soybeansrealann <- as.data.frame(lapply(soybeansrealann[,1:3],normalizesoybeans)) %>%
+            cbind(soybeansrealann[,4:7]) %>% select(-product)
+
+
+
+cornpredictann <- as.data.frame(lapply(cornpredictann[,1:3],normalizecorn)) %>%
+            cbind(cornpredictann[,4:7]) %>%  select(-product, -realexport)
+soybean_mealpredictann <- as.data.frame(lapply(soybean_mealpredictann[,1:3],normalizesoybean_meal)) %>%
+            cbind(soybean_mealpredictann[,4:7])  %>% select(-product, -realexport)
+soybeanspredictann <- as.data.frame(lapply(soybeanspredictann[,1:3],normalizesoybeans)) %>%
+            cbind(soybeanspredictann[,4:7])  %>% select(-product, -realexport)
+```
+
+```{r samplesize}
+## 75% of the sample size
+cornsmp_size <- floor(0.7 * nrow(cornrealann))
+corntrain_ind <- sample(seq_len(nrow(cornrealann)), size = cornsmp_size)
+
+traincorn <- cornrealann[corntrain_ind, ]
+traincorn %>% paged_table()
+testcorn  <- cornrealann[-corntrain_ind, ]
+
+soybean_mealsmp_size <- floor(0.6 * nrow(soybean_mealrealann))
+soybean_mealtrain_ind <- sample(seq_len(nrow(soybean_mealrealann)), size = soybean_mealsmp_size)
+
+trainsoybean_meal <- soybean_mealrealann[soybean_mealtrain_ind, ]
+testsoybean_meal  <- soybean_mealrealann[-soybean_mealtrain_ind, ]
+
+soybeanssmp_size <- floor(0.6 * nrow(soybeansrealann))
+soybeanstrain_ind <- sample(seq_len(nrow(soybeansrealann)), size = soybeanssmp_size)
+
+trainsoybeans <- soybeansrealann[soybeanstrain_ind, ]
+testsoybeans  <- soybeansrealann[-soybeanstrain_ind, ]
+```
+
+####  Modelling/prediction with ANN for corn 
+
+```{r cornmodeldata}
+
+softplus <- function(x) { log(1+ exp(x)) }
+nnetresult<- neuralnet::neuralnet(realexport ~ year + price + X.Intercept. + numbertwo + numberthree , data=traincorn, stepmax=1e6, hidden=c(3,3,3) ,  learningrate=0.1,  act.fct= softplus)
+modelresult <- compute(nnetresult, testcorn)
+predicted_cornexport <- modelresult$net.result
+corncor <- cor(predicted_cornexport, testcorn$realexport)
+```
+
+#### Future data prediction
+
+```{r cornpredictfuture}
+
+modelresult <- compute(nnetresult, cornpredictann)
+predicted_cornnorm <- modelresult$net.result
+unnormalize <- function(x) {
+  return ((x* (max(realann$realexport))- 
+                 min(realann$realexport)) + min(realann$realexport) ) 
+}
+```
+
+
+####  Modelling/prediction with ANN for soybean_meal 
+
+```{r soybean_mealmodeldata}
+
+nnetresult<- neuralnet::neuralnet(realexport ~ year + price + X.Intercept. + numbertwo + numberthree , data=trainsoybean_meal, stepmax=1e6, hidden=c(2,2,2,2) ,  learningrate=0.1,  act.fct= softplus, threshold=0.01)
+modelresult <- compute(nnetresult, testsoybean_meal)
+predicted_soybean_mealexport <- modelresult$net.result
+soybean_mealcor <- cor(predicted_soybean_mealexport, testsoybean_meal$realexport)
+```
+
+#### Future data prediction
+
+```{r soybean_mealpredictfuture}
+
+modelresult <- compute(nnetresult, soybean_mealpredictann)
+predicted_soybean_mealnorm <- modelresult$net.result
+```
+
+
+####  Modelling/prediction with ANN for soybeans  
+
+```{r soybeansmodeldata}
+
+nnetresult<- neuralnet::neuralnet(realexport ~ year + price + X.Intercept. + numbertwo + numberthree , data=trainsoybeans, stepmax=1e6, hidden=c(2,2,2) ,  learningrate=0.1,  act.fct= softplus)
+modelresult <- compute(nnetresult, testsoybeans)
+predicted_soybeansexport <- modelresult$net.result
+soybeanscor <- cor(predicted_soybeansexport, testsoybeans$realexport)
+```
+
+#### Future data prediction
+
+```{r soybeanspredictfuture}
+modelresult <- compute(nnetresult, soybeanspredictann)
+predicted_soybeansnorm <- modelresult$net.result
+```
+
+#### Summary of evaluation of NN models
+```{r  warning=FALSE ,out.width = '100%'}
+cornsummary <- data.frame(product=rep("corn", len=nrow(testcorn)) ,
+           real= unnormalize(testcorn$realexport),
+           predict=unnormalize(predicted_cornexport))
+
+soybean_mealsummary <- data.frame(product=rep("soybean_meal", len=nrow(testsoybean_meal)),   
+           real= unnormalize(testsoybean_meal$realexport),
+           predict=unnormalize(predicted_soybean_mealexport))
+
+
+soybeanssummary <- data.frame(product=rep("soybeans", len=nrow(testsoybeans)),
+           real= unnormalize(testsoybeans$realexport),
+           predict=unnormalize(predicted_soybeansexport))
+testevaluation <- rbind(cornsummary,soybean_mealsummary, soybeanssummary)
+testevaluation %>% paged_table() %>% 
+  ggplot(aes(real, predict,color=product))+
+  geom_point()+
+  geom_smooth(method = "lm", se = FALSE)+
+  facet_grid(.~product, scales="free")+ggtitle("Predicted vs Real prediction")
+### correlation table between prediction and real value per product
+data.frame(corncor, soybean_mealcor,  soybeanscor) %>% kable()
+
+```
+
+
+
+
+
+Now it is time to summarize the predicted data for future.
+```{r }
+predicted_corn <- bind_cols(product=rep("corn",len=11),year=2020:2030, export=unnormalize(predicted_cornnorm))
+predicted_soybean_meal <- bind_cols(product=rep("soybean_meal",11), year=2020:2030, export=unnormalize(predicted_soybean_mealnorm))
+predicted_soybeans <- bind_cols(product=rep("soybeans",len=11), year=2020:2030, export=unnormalize(predicted_soybeansnorm)) 
+```
+
+```{r }
+finalpredict <- bind_rows(predicted_corn, predicted_soybean_meal,predicted_soybeans) %>% mutate(type=rep("forecast", len=3*nrow(predicted_corn)))
+finalpredict %>%  paged_table()
+finalpredict$product <- as.factor(finalpredict$product)
+```
+
+Visualize the predicted data:
+
+```{r out.width = '100%'}
+Finaltable <- realann %>% select(product, year, realexport) %>% rename(export=realexport) %>%
+  mutate(type=rep("real", len=nrow(realann)) ) %>%
+  bind_rows(finalpredict)
+pred <-  Finaltable[Finaltable$type=="forecast",]
+  ggplot(Finaltable, aes(x = year, y = export, color = product)) +
+    geom_line()+ geom_point(data=pred, aes(x = year, y = export), color= "black")
+```
+
+
+Without doing the optimization the correlation of test prediction and real data is about 93, 90 and 96 percent which is great as shown in the table. However it might improve even more changing the parameters. (Especially as there are other criteria to consider). Different model parameter are tested for making sure of being generalized model that resulted in similar conclusions but a comprehensive k fold cross validation like the one done in regression in last step can be applied that was beyond the time-scope of this question. Also the number of data is too low which could be partially overcome by boostraping method. In general soybean_meal prediction seasonality does not seems to fully covered and it is a room for improvment. If I had more time aftere using boostrapin I would work on another methods or optimize the current result.
+
+
+Kind Regards
+Sajad Ghashami
