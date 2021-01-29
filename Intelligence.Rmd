@@ -434,6 +434,10 @@ One of the issues of the problem which could not be solved with linear regressio
 
 #### Data preparation
 
+```{r}
+head(mtcars)
+```
+
 
 ```{r buildingdata}
 ann <- basetable %>%  
